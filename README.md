@@ -1,116 +1,268 @@
-# Web Scraping API with Markdown Output深度评测：ScraperAPI 能否成为你的 LLM 数据管道首选
+# Proxy Rotation 教程：如何搭建稳定的代理轮换系统避免被封 IP
 
-*本文包含联盟推广链接，如果你通过这些链接注册或购买，我可能会获得一定佣金。这不影响我的真实评价，也不增加你的购买成本。*
+做过数据采集的人都知道，单个 IP 反复请求同一个网站，用不了多久就会被限速甚至直接封禁。Proxy rotation（代理轮换）就是解决这个问题的核心手段——每次请求自动切换不同的 IP 地址，让目标网站无法通过 IP 特征识别你的爬虫行为。
 
-## 为什么你需要一个能直接输出 Markdown 的爬虫 API
+这篇文章我会从原理讲到实操，把代理轮换的几种主流方案拆清楚，包括自建代理池和使用托管服务各自的优劣。如果你正在做 SEO 监控、价格比对、舆情抓取，或者任何需要大规模稳定采集的项目，这篇教程应该能帮你少走不少弯路。
 
-上个月我花了整整三天，试图把爬下来的 HTML 喂给 GPT 做结构化摘要，结果 token 炸了、格式乱了、钱也烧了。
+[👉 查看 ScraperAPI 全部套餐与代理轮换方案](https://www.scraperapi.com/?fp_ref=coupons&subid=intro)
 
-这就是我开始认真找一个 web scraping API with markdown output 的原因。原始 HTML 里塞满了导航栏、广告代码、脚本标签——这些对 LLM 来说全是噪音。如果 API 能在服务端直接把网页内容转成干净的 Markdown，你省的不只是后处理时间，还有实打实的 token 费用。
+## 为什么你需要 Proxy Rotation
 
-我的结论先放这儿：**ScraperAPI** 最近推出的 LM-ready Markdown 输出功能，在我测试的几个场景里，确实做到了"请求一次，拿到可用文本"。不完美，但目前性价比最合理的选项之一。下面展开聊。
+网站的反爬机制越来越成熟。Cloudflare、Akamai、PerimeterX 这些服务商提供的 bot 检测方案，能从请求频率、IP 信誉、浏览器指纹等多个维度判断流量是否来自自动化程序。其中最基础也最有效的一层防线就是 IP 频率限制——同一个 IP 在短时间内发出大量请求，直接触发封禁。
 
-## ScraperAPI 是谁？三分钟搞清楚背景
+代理轮换的核心逻辑很简单：把你的请求分散到成百上千个不同的 IP 上，让每个 IP 的请求频率都保持在正常用户水平。这样目标网站看到的是来自不同地区、不同网络的「正常访客」，而不是一台机器在疯狂抓取。
 
-ScraperAPI 是一家专注于网页数据采集基础设施的 SaaS 公司，成立至今服务过的开发者和企业数量已经相当可观。他们的核心卖点一直很明确：你只管发请求，代理池轮换、浏览器指纹、验证码处理、重试逻辑——全部由他们搞定。
+具体来说，proxy rotation 能帮你解决这几个问题：
 
-我第一次用是两年前做竞品价格监控的项目。当时吸引我的是它的简单粗暴：一个 API endpoint，把目标 URL 扔进去，拿回渲染后的 HTML。不用自己维护代理池，不用跟 Cloudflare 斗智斗勇。这种"把脏活累活外包出去"的思路，对独立开发者和小团队来说太省心了。
+- **避免 IP 封禁**：单 IP 被封后不影响整体采集任务
+- **绕过地理限制**：通过不同国家的代理节点访问区域限定内容
+- **提高采集成功率**：分散请求降低触发 rate limit 的概率
+- **维持长期稳定运行**：不用手动更换代理，自动化程度更高
 
-最近他们加了结构化数据提取和 Markdown 输出的能力，明显是在追 LLM 应用这波需求。，不绑卡，测完再决定。
+## 代理轮换的三种主流方案
 
-## 核心功能拆解：Markdown 输出到底好不好用
+### 方案一：自建代理池
 
-### 1. 一个参数开启 Markdown 模式
+自己购买或收集一批代理 IP，写脚本在每次请求时随机选取一个。Python 里最常见的做法是维护一个代理列表，配合 `requests` 库的 `proxies` 参数使用：
 
-在请求里加一个 `output_format=markdown` 参数，返回的就不再是原始 HTML，而是经过清洗的 Markdown 文本。标题层级、列表、链接、加粗——基本都能正确保留。我拿几个新闻站和文档站测试，转换准确率让我比较满意。
+python
+import requests
+import random
 
-说实话，之前我用 Python 的 markdownify 库自己做后处理，经常遇到嵌套表格炸掉、代码块丢失缩进的问题。ScraperAPI 的服务端转换至少在这两个场景上比我本地方案稳定。
+proxy_list = [
+    "http://user:pass@proxy1.example.com:8080",
+    "http://user:pass@proxy2.example.com:8080",
+    "http://user:pass@proxy3.example.com:8080",
+    # ... 更多代理
+]
 
-### 2. 自动代理轮换 + 反检测
+def get_random_proxy():
+    proxy = random.choice(proxy_list)
+    return {"http": proxy, "https": proxy}
 
-这不是新功能，但值得强调。ScraperAPI 维护着一个覆盖多个国家的代理池，每次请求自动轮换 IP。对于需要大规模采集的场景——比如你要抓取上千个产品页面转成 Markdown 喂给 RAG 系统——不用担心被封 IP 的问题。
+response = requests.get("https://target-site.com", proxies=get_random_proxy(), timeout=10)
 
-我跑过一个批量任务，连续请求同一个电商站 2000 次，成功率在 97% 以上。偶尔失败的那几次，API 自动重试后也拿到了结果。
 
-### 3. JavaScript 渲染支持
+**优点**：完全可控，成本可以压得很低（如果你有渠道拿到便宜的代理）。
 
-很多现代网站是 SPA 架构，不执行 JS 你拿到的就是个空壳。ScraperAPI 支持无头浏览器渲染，确保你拿到的 Markdown 是页面完全加载后的内容，而不是一堆 `<div id="root"></div>`。
+**缺点**：代理质量参差不齐，需要自己做健康检查、剔除失效 IP、处理超时重试。维护成本随规模增长急剧上升。
 
-### 4. 结构化数据提取 + 自定义规则
+### 方案二：付费代理服务商的轮换 API
 
-除了整页转 Markdown，你还可以定义提取规则，只拿你要的字段。比如只要文章正文、只要价格信息、只要评论区。这对构建特定领域的 LLM 训练数据集特别有用。
+像 Bright Data、Oxylabs、Smartproxy 这类服务商提供「旋转代理」端点——你只需要连接一个固定的网关地址，服务商在后端自动帮你轮换 IP。每次请求出去的 IP 都不一样，你不用管池子里有多少 IP、哪些失效了。
 
-### 5. 地理定位请求
+python
+import requests
 
-需要拿到特定地区看到的内容？指定 `country_code` 参数就行。做多语言内容采集或者区域性价格对比时，这个功能省了我单独买地区代理的钱。
+# 连接旋转代理网关，每次请求自动分配不同 IP
+proxy = "http://username:password@gate.rotating-proxy.com:777"
+proxies = {"http": proxy, "https": proxy}
 
-## 我的真实使用场景：给 RAG 系统喂数据
+response = requests.get("https://target-site.com", proxies=proxies, timeout=15)
 
-说个具体的。我在做一个垂直领域的问答机器人，需要定期抓取大约 50 个行业网站的最新文章，转成 Markdown 后切片存入向量数据库。
 
-之前的流程是：Scrapy 抓 HTML → BeautifulSoup 清洗 → markdownify 转格式 → 手动修复格式问题 → 入库。整条链路维护成本高，每次目标站改版我都得调解析规则。
+**优点**：省心，IP 池规模大（通常百万级），成功率高。
 
-换成 ScraperAPI 之后，流程缩成：API 请求（带 markdown 参数）→ 简单质量检查 → 入库。代码量砍了 60%，维护频率从每周变成每月看一眼。
+**缺点**：按流量或请求数计费，大规模使用成本不低。
 
-唯一让我有点不爽的是，某些排版特别复杂的页面（比如多栏布局混合嵌入视频的那种），Markdown 输出会丢失一些结构信息。但说实话，这种页面不管用什么工具转换都不会完美，LM 也不需要那些花哨排版。
+### 方案三：集成式采集 API（代理 + 渲染 + 反检测一体化）
 
-## 和竞品比怎么样
+这是近几年越来越流行的方案。你不再自己管理代理，而是把整个「发请求 → 轮换 IP → 处理验证码 → 渲染 JavaScript → 返回数据」的流程交给一个 API 服务。ScraperAPI 就是这类方案的典型代表。
 
-市面上能做 web scraping API with markdown output 的不止 ScraperAPI。Firecrawl 主打 LM-ready 输出，Jina Reader 有免费的 URL 转 Markdown 服务，Crawl4AI 是开源方案。
+python
+import requests
 
-我的体感对比：
+# ScraperAPI 处理代理轮换、浏览器指纹、验证码等所有反爬逻辑
+payload = {
+    "api_key": "YOUR_API_KEY",
+    "url": "https://target-site.com/products",
+    "render": "true  # 需要 JS 渲染时开启
+}
 
-- **Firecrawl**：Markdown 质量略好，但价格贵不少，免费额度更少
+response = requests.get("https://api.scraperapi.com", params=payload, timeout=60)
+print(response.text)
 
-- **Jina Reader**：免费好用，但不支持 JS 渲染，复杂页面拿不到完整内容
 
-- **Crawl4AI**：开源免费，但需要自己部署和维护基础设施，代理池得自己搞
+**优点**：零基础设施维护，内置智能重试和 IP 轮换策略，支持 JS 渲染和验证码处理，成功率通常在 99% 以上。
 
-ScraperAPI 的优势在于"全包"——代理、渲染、反检测、Markdown 转换一条龙，加上免费 5000 credits 的试用额度足够你跑通 POC。如果你是个人开发者或小团队，不想自己搭基础设施，它的性价比确实不错。
+**缺点**：对 API 服务商有依赖，单次请求成本比裸代理高（但省下的开发和运维时间往远超差价）。
 
-## ScraperAPI 全套餐对比
+[👉 免费试用 ScraperAPI 的智能代理轮换（含 5000 次请求额度）](https://www.scraperapi.com/?fp_ref=coupons&subid=after-methods)
 
-下面是目前官网在售的所有方案，我按使用场景帮你标了适合人群：
+## 自建 vs 托管：怎么选
 
-| **套餐名称** | **核心配置** | **月价** | **适合人群** | **操作** |
+| 维度 | 自建代理池 | 付费旋转代理 | 集成式采集 API（如 ScraperAPI） |
+| ------ | ------------------------- | --- | --- |
+| 上手难度 | 高，需要写调度逻辑 | 中，换个代理地址即可 | 低，改一行 URL 就行 |
+| 维护成本 | 高，需持续监控 IP 健康 | 低 | 几乎为零 |
+| IP 池规模 | 取决于预算 | 百万级 | 4000 万+ 住宅 IP（ScraperAPI） |
+| JS 渲染支持 | 需自己集成 headless browser | 不含 | 内置 |
+| 验证码处理 | 需自己对接打码平台 | 不含 | 内置自动处理 |
+| 适合场景 | 小规模、对成本极度敏感 | 中等规模、有一定技术能力 | 任何规模、追求稳定和效率 |
 
-|---|---|---|---|
+我自己的经验是：项目初期用自建方案练手没问题，但一旦采集量上去（日均超过 10 万请求），自建方案的维护精力会吃掉你大量本该用来处理数据的时间。这时候切到托管服务反而是更经济的选择。
 
-| Hobby（免费） | 5,000 credits/月，1 并发 | $0 | 个人测试、验证想法 | |
+## 实操：用 ScraperAPI 实现零配置代理轮换
 
-| Starter |100,000 credits/月，10 并发 | $49 | 个人项目、小规模数据采集 | |
+ScraperAPI 的设计思路是把所有反爬复杂度封装在一个 API 调用里。你不需要管代理池、不需要处理 IP 被封后的重试逻辑、不需要自己做浏览器指纹伪装。下面是几个常见场景的代码示例。
 
-| Business | 3,000,000 credits/月，50 并发 | $149 | 中型团队、生产环境跑量 | |
+### 基础请求（自动代理轮换）
 
-| Enterprise | 定制 credits，100+ 并发 | 定制报价 | 大规模采集、定制需求 | |
+python
+import requests
 
-年付的话大概能省 20% 左右。我个人用的是 Starter，每月 10 万次请求对我的 RAG 项目绑有余。如果你刚开始探索，Hobby 免费版完全够你跑通整个流程再决定要不要升级。
+API_KEY = "YOUR_SCRAPERAPI_KEY"
 
-## 常见问题
+def scrape(url):
+    params = {
+        "api_key": API_KEY,
+        "url": url
+    }
+    response = requests.get("https://api.scraperapi.com", params=params, timeout=60)
+    if response.status_code == 200:
+        return response.text
+    else:
+        print(f"请求失败: {response.status_code}")
+        return None
 
-### ScraperAPI 的 Markdown 输出支持哪些页面类型？
+html = scrape("https://example.com/products/page/1")
 
-基本上常规的文章页、产品页、文档页都没问题。JS 渲染的SPA 页面也能处理，前提是你开启了 `render=true` 参数。特别复杂的交互式页面（比如需要登录后才显示内容的）可能需要配合他们的 session 功能。
 
-### 免费额度用完了会怎样？
+### 指定地理位置的代理
 
-不会自动扣费。Hobby 计划的 5000 credits 用完就停，不会偷偷升级你的账户。想继续用就手动升级，这点我觉得挺厚道的。
+python
+params = {
+    "api_key": API_KEY,
+    "url": "https://example.co.uk/prices",
+    "country_code": "gb"  # 使用英国 IP
+}
+response = requests.get("https://api.scraperapi.com", params=params, timeout=60)
 
-### Web scraping API with markdown output 适合什么场景？
 
-最典型的三个：给 LM/RAG 系统准备训练或检索数据、内容聚合类产品的数据源、SEO 竞品内容分析。核心价值就是省掉 HTML 到可用文本之间那堆脏活。
+### 需要 JavaScript 渲染的页面
 
-### ScraperAPI 和自己搭 Scrapy + 代理池比，划算吗？
+python
+params = {
+    "api_key": API_KEY,
+    "url": "https://spa-website.com/dashboard",
+    "render": "true"  # 启用无头浏览器渲染
+}
+response = requests.get("https://api.scraperapi.com", params=params, timeout=90)
 
-看量。如果你每月只需要几万次请求，自己维护代理池的时间成本和代理费用加起来，大概率比直接用 ScraperAPI 贵。但如果你每月需要千万级请求，自建方案的单次成本会更低。Starter 的 $49/月对应 10 万次请求，算下来每次不到 $0.005。
 
-### 退款政策是什么？
+### 并发采集（配合 asyncio）
 
-官网写的是支持退款，具体流程是通过邮件联系客服提交请求。我没实际退过，但从社区反馈来看流程不复杂。建议先用免费版测够了再决定付费，这样根本不需要退款。
+python
+import asyncio
+import aiohttp
 
-## 最后说两句
+API_KEY = "YOUR_SCRAPERAPI_KEY"
+BASE_URL = "https://api.scraperapi.com"
 
-如果你正在找一个能直接输出干净 Markdown 的 web scraping API，ScraperAPI 值得排在你的测试清单前面。不用自己折腾代理池，不用写一堆 HTML 清洗代码，API 请求加个参数就拿到 LM 可用的文本——这个体验确实省事。
+async def fetch(session, url):
+    params = {"api_key": API_KEY, "url": url}
+    async with session.get(BASE_URL, params=params, timeout=60) as response:
+        return await response.text()
 
-免费 5000 次请求够你把核心场景跑一遍。
+async def main():
+    urls = [f"https://example.com/page/{i}" for i in range(1, 51)]
+    async with aiohttp.ClientSession() as session:
+        tasks = [fetch(session, url) for url in urls]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+    # 处理 results...
 
+asyncio.run(main())
+
+
+ScraperAPI 在后端自动处理了代理轮换、请求头随机化、Cookie 管理和失败重试。你写的代码量和直接用 `requests` 抓取几乎一样，但成功率和稳定性完全不在一个量级。
+
+[👉 注册 ScraperAPI 免费获取 5000 次 API 请求额度](https://www.scraperapi.com/?fp_ref=coupons&subid=after-tutorial)
+
+## ScraperAPI 套餐与定价
+
+ScraperAPI 提供从免费试用到企业级的多层套餐，按 API 请求次数计费。以下是当前公开的套餐信息：
+
+| 套餐 | 价格 | 月请求量 | 并发数 | 适用人群 | 购买链接 |
+| --- | ------ | ---------- | -------- | ---------- | --- |
+| Free Trial | $0 | 5,000 次 | 不限 | 评估测试 | [ 立即免费注册试用](https://www.scraperapi.com/?fp_ref=coupons&subid=free-trial) |
+| Hobby | $49/月 | 100,000 次 | 20 | 个人项目、小规模监控 | [ 开通 Hobby 套餐](https://www.scraperapi.com/?fp_ref=coupons&subid=hobby) |
+| Startup | $149/月 | 500,000 次 | 50 | 初创团队、中等采集量 | [ 开通 Startup 套餐](https://www.scraperapi.com/?fp_ref=coupons&subid=startup) |
+| Business | $299/月 | 1,000,000 次 | 100 | 成熟业务、大规模数据采集 | [ 开通 Business 套餐](https://www.scraperapi.com/?fp_ref=coupons&subid=business) |
+| Enterprise | 定制报价 | 定制 | 定制 | 超大规模、定制需求 | [ 联系销售获取企业方案](https://www.scraperapi.com/?fp_ref=coupons&subid=enterprise) |
+
+年付通常有折扣（大约节省 20%-30%），具体以官网实时显示为准。所有付费套餐都包含地理定位、JS 渲染、自动重试等核心功能。
+
+## 代理轮换的最佳实践
+
+不管你用哪种方案，以下几条经验能帮你显著提高采集成功率：
+
+**控制请求频率**：即使有代理轮换，也不要把并发拉到极限。给每个请求之间加 1-3 秒的随机延迟，模拟真实用户行为。
+
+**设置合理的超时时间**：代理请求的延迟通常比直连高，timeout 建议设 30-60 秒，避免误判超时导致大量重试。
+
+**实现指数退避重试**：遇到 429（Too Many Requests）或 503 时，不要立即重试，按 2s → 4s → 8s → 16s 的间隔递增等待。
+
+**监控成功率**：定期统计请求成功率，如果某个目标站点的成功率突然下降，可能是对方更新了反爬策略，需要调整采集参数。
+
+**按目标站点分配策略**：不同网站的反爬强度差异很大。对于防护较弱的站点，普通数据中心代理就够用；对于 Amazon、Google 这类重防护站点，住宅代理 + JS 渲染 + 指纹伪装缺一不可。
+
+python
+import time
+import random
+
+def scrape_with_backoff(url, max_retries=5):
+    for attempt in range(max_retries):
+        try:
+            response = requests.get(
+                "https://api.scraperapi.com",
+                params={"api_key": API_KEY, "url": url},
+                timeout=60
+            )
+            if response.status_code == 200:
+                return response.text
+            elif response.status_code == 429:
+                wait = (2 ** attempt) + random.uniform(0, 1)
+                time.sleep(wait)
+            else:
+                break
+        except requests.exceptions.Timeout:
+            wait = (2 ** attempt) + random.uniform(0, 1)
+            time.sleep(wait)
+    return None
+
+
+[👉 用 ScraperAPI 跳过所有底层配置直接开始采集](https://www.scraperapi.com/?fp_ref=coupons&subid=best-practices)
+
+## 常见问题 FAQ
+
+### 免费代理能用来做 proxy rotation 吗？
+
+技术上可以，但实际效果很差。免费代理的存活时间通常只有几分钟到几小时，速度慢、不稳定，而且很多 IP 早已被目标网站列入黑名单。用来学习原理没问题，生产环境不建议依赖。
+
+### 住宅代理和数据中心代理有什么区别？
+
+数据中心代理来自云服务器，速度快但容易被识别为非真实用户；住宅代理来自真实的家庭宽带 IP，被检测到的概率低得多，但价格也更高。对于防护严格的网站（电商平台、社交媒体），住宅代理是刚需。
+
+### ScraperAPI 的代理池有多大？
+
+ScraperAPI 维护着超过 4000 万个 IP 的代理池，覆盖全球 50 多个国家，包含住宅 IP 和数据中心 IP。系统会根据目标网站的防护等级自动选择最合适的代理类型。
+
+### 代理轮换会影响采集速度吗？
+
+会有一定的延迟增加，因为请求需要经过代理服务器中转。但对于大规模采集来说，这点延迟远比 IP 被封后的停工时间划算。通过并发请求可以有效弥补单次请求的延迟。
+
+### 用代理轮换采集数据合法吗？
+
+这取决于你采集的内容和用途。公开可访问的数据（不需要登录、没有明确禁止爬取的条款）在大多数司法管辖区是可以采集的。但每个网站的 robots.txt 和 ToS 不同，建议根据具体情况评估。
+
+[👉 立即注册 ScraperAPI 开始你的第一个代理轮换项目](https://www.scraperapi.com/?fp_ref=coupons&subid=faq)
+
+## 总结：什么时候该自建，什么时候该用服务
+
+如果你的采集需求是每天几百到几千个请求、目标网站防护不强、你有时间和兴趣折腾基础设施——自建代理池是个不错的学习项目。
+
+但如果你的目标是稳定、高效地完成数据采集任务，把精力集中在数据处理和业务逻辑上，那直接用 ScraperAPI 这类集成服务是更务实的选择。它把代理轮换、反检测、JS 渲染、验证码处理这些脏活累活全包了，你只需要关心「我要抓什么数据」和「拿到数据后怎么用」。
+
+免费的 5000 次请求额度足够你跑通整个流程、验证方案可行性。如果效果符合预期再考虑付费升级，风险几乎为零。
+
+[👉 现在注册 ScraperAPI 免费领取 5000 次请求开始实操](https://www.scraperapi.com/?fp_ref=coupons&subid=footer-cta)
